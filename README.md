@@ -30,6 +30,7 @@ A visual, gamified dashboard for tracking habits and life stats directly from yo
 Insert this code block into any note. 
 
 ### Dashboard Example
+```yaml
 ```habit-heatmap
 FOLDER: '"100 Journal"'
 XP_SETTINGS: { globalFactor: 30, treeFactor: 50 }
@@ -38,6 +39,7 @@ STATS:
   - { prop: "mood", type: "metric", dataType: "rating", title: "🧠 Mood", streakType: "none", boundaries: { min: 1, default: 4, max: 7 }, color: { type: "absolute", palette: ["#ff2222", "#eeee44", "#33ff44"] } }
   - { prop: "exercise", type: "habit", dataType: "time", title: "🏋️ Exercise", streakType: "positive", unit: "min", freq: "day", boundaries: { min: 0, default: 0, max: 1440 }, mastery: 60, xp: { type: "linear", div: 1 }, color: { type: "relative", rgb: "255, 140, 0" } }
   - { prop: "cannabis", type: "metric", dataType: "amount", title: "🌿 Cannabis", streakType: "negative", goal: "down", unit: "use", freq: "week", boundaries: { min: 0, default: 0, max: 99 }, color: { type: "relative", rgb: "107, 142, 35" } }
+```
 ```
 
 ### Daily Note Example 
