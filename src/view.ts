@@ -1,200 +1,370 @@
 import { moment } from "obsidian";
 
+type Boundaries = {
+    min: number;
+    default: number;
+    max: number;
+};
+
+type ColorConfig = {
+    type: "absolute" | "relative";
+    palette?: string[];
+    colors?: string[];
+    rgb?: string;
+};
+
+type StatConfig = {
+    prop: string;
+    title: string;
+    type: string;
+    dataType: string;
+    streakType: string;
+    goal: string;
+    unit: string;
+    freq: string;
+    boundaries: Boundaries;
+    color: ColorConfig;
+};
+
+type HabitData = {
+    maxRecorded: number;
+    currentToday: number;
+    avg90: number;
+    prevAvg90: number;
+    lifetimeAvg: number;
+    logs90: number;
+    streak: number;
+    bestStreak: number;
+    atRisk: boolean;
+    isNewPR: boolean;
+    trend: number;
+    mastery?: {
+        level: number;
+        totalXp: number;
+        currentXp: number;
+        requiredXp: number;
+        progress: number;
+    };
+    rank?: {
+        name: string;
+        cssClass: string;
+        progress: number;
+        nextRank: string;
+    };
+};
+
+type GlobalData = {
+    quest: {
+        completed: number;
+        total: number;
+    };
+    levelData: {
+        level: number;
+        progress: number;
+        currentXp: number;
+        requiredXp: number;
+    };
+    todayXp: number;
+    title: string;
+    isPerfectDay: boolean;
+};
+
 export class DashboardView {
     // init view
     constructor() { }
 
-    // safely parse data, applying defaults and enforcing bounds
-    private sanitize(value: any, boundaries: any): number {
-        if (value === undefined || value === null) return boundaries?.default ?? 0;
-        
-        const val = Number(value);
-        if (isNaN(val)) return boundaries?.default ?? 0;
-        if (boundaries && val < boundaries.min) return boundaries.min;
-        if (boundaries && val > boundaries.max) return boundaries.max;
-        
-        return val;
+    /* 
+    *  coordinates assembly of UI by calling component methods
+    *  outputs an html string, which is ready to be rendered
+    */
+    renderDashboard(store: any, stats: StatConfig[], dataMap: any): string {
+        return `
+            ${this.renderQuestBar(store.global)}
+            ${this.renderGlobalXP(store.global)}
+            <div class="dashboard-wrapper">
+                ${stats.map(stat => this.renderCard(stat, store.habits[stat.prop], dataMap)).join("")}
+            </div>
+        `;
     }
 
-    // format raw values for ui display based on data type
-    private formatValue(stat: any, val: number): string {
-        // center rating values around 0 (e.g., 4 becomes +0)
+    /* 
+    *  build the daily quest progress bar
+    *  displays raw number of today's completed habits (3/7 Completed)
+    *  calculates completion bar css width percentage
+    */
+    private renderQuestBar(globalData: GlobalData): string {
+        const completionPercentage = globalData.quest.total > 0
+            ? (globalData.quest.completed / globalData.quest.total) * 100
+            : 0;
+
+        return `
+            <div class="quest-container">
+                <div class="quest-label">
+                    <span>🎯 DAILY QUEST</span>
+                    <span>${globalData.quest.completed}/${globalData.quest.total}</span>
+                </div>
+                <div class="quest-bar-outer">
+                    <div class="quest-bar-inner" style="width:${completionPercentage}%"></div>
+                </div>
+            </div>
+        `;
+    }
+
+    /*
+    *  build the global xp and level bar
+    *  shows level title (e.g., "Asteroid Rider"),
+    *  xp amount in numbers (e.g., 1804/2010 XP),
+    *  xp progress bar with highlight layer of today's xp gained
+    *  makes xp bar glow on a perfect day (all habits completed)
+    */
+    private renderGlobalXP(globalData: GlobalData): string {
+        const { levelData, todayXp, title, isPerfectDay } = globalData;
+        const todayPercentage = (todayXp / levelData.requiredXp) * 100;
+        const glowClass = isPerfectDay ? 'perfect-day-glow' : '';
+        const xpBonus = todayXp > 0
+            ? `<span style="color:var(--text-accent)">+${Math.floor(todayXp)}</span>`
+            : '';
+
+        return `
+            <div class="global-xp-wrapper ${glowClass}">
+                <div class="global-xp-label">
+                    <span>🌍 ${title}</span>
+                    <span>Lvl ${levelData.level}</span>
+                </div>
+                <div class="xp-bar-outer" style="height:12px">
+                    <div class="xp-bar-inner" style="width:${levelData.progress}%; background:var(--text-accent)"></div>
+                    <div class="xp-bar-inner today-highlight" style="width:${todayPercentage}%"></div>
+                </div>
+                <div class="xp-label" style="margin-top:5px;font-size:0.8em;opacity:0.8">
+                    <span>${levelData.currentXp}/${levelData.requiredXp} XP</span>
+                    ${xpBonus}
+                </div>
+            </div>
+        `;
+    }
+
+    /*
+    *  build individual stat card container (e.g., "Mood")
+    *  returns error if no data exists for stat
+    *  checks if good habit is done (or bad habit is avoided)
+    *  gives colored border to card container on habit success
+    */
+    private renderCard(stat: StatConfig, habit: HabitData, dataMap: any): string {
+        if (!habit) return `<div class="hm-card">No data: ${stat.prop}</div>`;
+
+        // determine if border should light up based on success conditions
+        const isPositive = stat.streakType === "positive";
+        const isDone = isPositive ? habit.currentToday > 0 : habit.currentToday === 0;
+        const cardClass = `hm-card ${isPositive && isDone ? 'hm-card-done' : ''} ${habit.isNewPR ? 'hm-pr-enchanted' : ''}`;
+
+        return `
+            <div class="${cardClass}">
+                ${this.renderBadges(stat, habit)}
+                <h3><span class="hm-title-text">${stat.title}</span></h3>
+                ${this.renderHeatmap(stat, habit, dataMap)}
+                ${this.renderFooter(stat, habit)}
+            </div>
+        `;
+    }
+
+    /*
+    *  displays current level in top left and ranked tier in top right of card container
+    *  also renders detailed tooltips for more info on stat xp level and rank
+    *  only habits get badges, metrics get nothing (poor metrics T-T)
+    */
+    private renderBadges(stat: StatConfig, habit: HabitData): string {
+        if (stat.type !== "habit" || !habit.mastery) return "";
+
+        const masteryTooltip = `Level ${habit.mastery.level}\nLifetime XP: ${habit.mastery.totalXp}\nProgress: ${habit.mastery.currentXp}/${habit.mastery.requiredXp} XP`;
+        const rankTooltip = habit.rank
+            ? `${habit.rank.name} Rank\n${habit.rank.progress}% toward ${habit.rank.nextRank}`
+            : "";
+
+        return `
+            <div class="mastery-container" title="${masteryTooltip}">
+                <div class="mastery-badge">Lvl ${habit.mastery.level}</div>
+                <div class="rank-progress-outer">
+                    <div class="rank-progress-inner" style="width:${habit.mastery.progress}%"></div>
+                </div>
+            </div>
+            ${habit.rank ? `
+                <div class="rank-container" title="${rankTooltip}">
+                    <div class="rank-badge ${habit.rank.cssClass}">${habit.rank.name}</div>
+                </div>
+            ` : ''}
+        `;
+    }
+
+    /*
+    *  render current average, progress trend, and streak info at bottom of each stat card
+    *  trend colors are based on goal parameter (either up/down)
+    *  also builds tooltips with extra data summary (e.g., previous 90-days performance average)
+    */
+    private renderFooter(stat: StatConfig, habit: HabitData): string {
+        // determine trend colors
+        const goal = stat.goal || "up";
+        const trendIsGood = goal === "up" ? habit.trend > 0 : habit.trend < 0;
+        const trendClass = habit.trend !== 0 ? (trendIsGood ? 'trend-good' : 'trend-bad') : '';
+        const freqSuffix = stat.dataType === "rating" ? "" : ` / ${stat.freq}`;
+
+        const statsTooltip = `
+            Current: ${this.formatValue(stat, habit.avg90)}
+            Previous: ${this.formatValue(stat, habit.prevAvg90)}
+            Lifetime: ${this.formatValue(stat, habit.lifetimeAvg)}
+            Consistency: ${habit.logs90}/90 days
+        `;
+
+        // streak icon and tooltip
+        // use diff streak icon for normal streaks, new PR streaks and streaks that will end if not completed today
+        const streakIcon = habit.atRisk ? "⚠️" : (habit.isNewPR ? "🌟" : "🔥");
+        const streakTooltip = `All-time best: ${habit.bestStreak}`;
+        const streakHtml = habit.streak > 0
+            ? ` | <span class="${habit.atRisk ? 'streak-warning' : 'streak-active'}" title="${streakTooltip}">${streakIcon} ${habit.streak}</span>`
+            : "";
+
+        return `
+            <div class="hm-footer">
+                <span title="${statsTooltip.trim()}" class="hm-stat-details" style="cursor: help;">
+                    ${this.formatValue(stat, habit.avg90)}${freqSuffix} |
+                    <span class="${trendClass}">${habit.trend > 0 ? "+" : ""}${habit.trend.toFixed(0)}%</span>
+                </span>
+                ${streakHtml}
+            </div>
+        `;
+    }
+
+    /*
+    *  build 90-day github-style heatmap grid
+    *  calculate weekday offset and injects invis cells for date alignment
+    *  maps data from daily notes to cells of heatmap
+    *  outlines current day 
+    */
+    private renderHeatmap(stat: StatConfig, habitData: HabitData, dataMap: any): string {
+        const monthsHtml = Array.from({ length: 3 }, (_, i) => {
+            const monthContext = window.moment().subtract(2 - i, 'months');
+            const daysInMonth = monthContext.daysInMonth();
+            const offset = (monthContext.startOf('month').day() + 6) % 7;
+
+            // map visible and hidden cells
+            const cellsHtml = [
+                ...Array(offset).fill('<div class="hm-cell hm-hidden"></div>'),
+                ...Array.from({ length: daysInMonth }, (_, d) => {
+                    const dateStr = monthContext.date(d + 1).format('YYYY-MM-DD');
+                    const raw = dataMap[dateStr]?.[stat.prop];
+
+                    // conditionally sanitize to preserve undefined status for missing files
+                    const val = (raw !== undefined && raw !== null)
+                        ? this.sanitize(raw, stat.boundaries)
+                        : undefined;
+
+                    const color = this.renderCellColor(val, habitData.maxRecorded, stat.color, stat.boundaries);
+                    const isToday = dateStr === window.moment().format('YYYY-MM-DD');
+
+                    return `
+                        <div class="hm-cell ${isToday ? 'hm-today' : ''}"
+                             style="background-color: ${color}"
+                             title="${dateStr}: ${raw ?? 'No data'}">
+                        </div>
+                    `;
+                })
+            ].join("");
+
+            return `<div class="hm-month">${cellsHtml}</div>`;
+        }).join("");
+
+        return `<div class="hm-months-wrapper">${monthsHtml}</div>`;
+    }
+
+    /*
+    *  format raw values based on data type and frequency for the card footer
+    *  if dataType is rating, offset min and max around default
+    *  (e.g., mood is stored as 1 to 7 but gets displayed as -3 to +3) 
+    */
+    private formatValue(stat: StatConfig, val: number): string {
         if (stat.dataType === "rating") {
-            const min = stat.boundaries?.min ?? 0;
-            const max = stat.boundaries?.max ?? 10;
-            const mid = min + (max - min) / 2;
-            const adjusted = val - mid;
-            return (adjusted >= 0 ? "+" : "") + adjusted.toFixed(1);
+            const adjustedValue = val - stat.boundaries.default;
+            return `${adjustedValue >= 0 ? "+" : ""}${adjustedValue.toFixed(1)}`;
         }
 
-        // scale weekly values and format decimals
-        const multipliedVal = (stat.freq === "week") ? (val * 7) : val;
-        const isWhole = stat.unit === "min" || stat.unit === "tasks";
-        
-        return isWhole
-            ? `${Math.floor(multipliedVal)} ${stat.unit}`
-            : `${multipliedVal.toFixed(1)} ${stat.unit}`;
+        const multiplier = stat.freq === "week" ? val * 7 : val;
+        return (stat.unit === "min" || stat.unit === "tasks")
+            ? `${Math.floor(multiplier)} ${stat.unit}`
+            : `${multiplier.toFixed(1)} ${stat.unit}`;
     }
 
-    // calculate dynamic background color for a single heatmap cell
-    renderCellColor(value: number | undefined, maxRecorded: number, color: any, boundaries: any) {
-        // handle empty or zero states
-        if (value === undefined || value === null) {
-            return `var(--background-modifier-hover)`;
-        }
-        if (value <= 0 && boundaries.min === 0) {
+
+    /*
+    *  calculate dynamic background color for a single cell
+    *  if data for day is missing returns default gray
+    *  has logic for absolute color palletes (3 different colors)
+    *  or relative color pallete (1 color with variying opacity)
+    */
+    private renderCellColor(
+        value: number | undefined,
+        maxRecorded: number,
+        colorConfig: ColorConfig,
+        boundaries: Boundaries
+    ): string {
+        // handle empty or strictly zero states
+        if (value === undefined || value === null || (value <= 0 && boundaries.min === 0)) {
             return `var(--background-modifier-hover)`;
         }
 
         // fallback for missing color config
-        if (!color) return `rgba(128, 128, 128, 0.5)`;
+        if (!colorConfig) return `rgba(128, 128, 128, 0.5)`;
 
-        // resolve absolute color gradients (e.g. mood, sleep)
-        if (color.type === "absolute") {
-            const palette = color.palette || color.colors ||["#ff2222", "#eeee44", "#33ff44"];
-            
-            const extractRgb = (hex: string) => {
+        // resolve absolute 3-color gradients
+        if (colorConfig.type === "absolute") {
+            const palette = colorConfig.palette || colorConfig.colors || ["#ff2222", "#eeee44", "#33ff44"];
+            // using default as the baseline pivot
+            const mid = boundaries.default;
+            const isLow = value <= mid;
+            // percentage relative to the pivot point (mid)
+            const percentage = Math.min(1, isLow
+                ? (value - boundaries.min) / (mid - boundaries.min || 1)
+                : (value - mid) / (boundaries.max - mid || 1));
+
+            // safely extract hex to rgb arrays
+            const extractRgb = (hex: string): [number, number, number] => {
                 const clean = hex.replace('#', '');
-                const match = clean.length === 3 ? clean.split('').map(c => c + c) : clean.match(/.{1,2}/g);
-                return match ? match.map(x => parseInt(x, 16)) : [128, 128, 128];
+                const match = clean.length === 3
+                    ? clean.split('').map(c => c + c)
+                    : clean.match(/.{1,2}/g);
+                const parts = match ? match.map(x => parseInt(x, 16)) : [];
+                return [parts[0] ?? 128, parts[1] ?? 128, parts[2] ?? 128];
             };
-            
-            const [colorStart, colorMid, colorEnd] = palette.map(extractRgb);
-            const min = boundaries?.min ?? 0;
-            const max = boundaries?.max ?? 10;
-            const mid = min + (max - min) / 2;
-            
-            // interpolate between start/mid or mid/end based on value
-            const isLowerHalf = value <= mid;
-            const percentage = Math.min(1, isLowerHalf ? (value - min) / (mid - min || 1) : (value - mid) / (max - mid || 1));
-            const [startRgb, endRgb] = isLowerHalf ? [colorStart, colorMid] : [colorMid, colorEnd];
-            
-            return `rgb(${Math.floor(startRgb[0] + (endRgb[0] - startRgb[0]) * percentage)}, ${Math.floor(startRgb[1] + (endRgb[1] - startRgb[1]) * percentage)}, ${Math.floor(startRgb[2] + (endRgb[2] - startRgb[2]) * percentage)})`;
+
+            const rgbColors = palette.map(extractRgb);
+
+            // guarantee 3 distinct colors by assigning fallbacks
+            const c0 = rgbColors[0] ?? [255, 34, 34];
+            const c1 = rgbColors[1] ?? [238, 238, 68];
+            const c2 = rgbColors[2] ?? [51, 255, 68];
+
+            const [sr, sg, sb] = isLow ? c0 : c1;
+            const [er, eg, eb] = isLow ? c1 : c2;
+
+            // interpolate rgb
+            const r = Math.floor(sr + (er - sr) * percentage);
+            const g = Math.floor(sg + (eg - sg) * percentage);
+            const b = Math.floor(sb + (eb - sb) * percentage);
+
+            return `rgb(${r}, ${g}, ${b})`;
         }
 
-        // resolve relative opacity colors (e.g. exercise, daily tasks)
-        const rgbString = color.rgb || "128, 128, 128";
-        const denom = (maxRecorded && maxRecorded > 0) ? maxRecorded : 1;
-        return `rgba(${rgbString}, ${Math.max(0.2, Math.min(value / denom, 1))})`;
+        // process relative opacity based on all-time max
+        const denominator = maxRecorded > 0 ? maxRecorded : 1;
+        return `rgba(${colorConfig.rgb || "128, 128, 128"}, ${Math.max(0.2, Math.min(value / denominator, 1))})`;
     }
 
-    // generate 90-day github-style heatmap grid
-    renderHeatmap(stat: any, habitData: any, dataMap: any) {
-        let html = `<div class="hm-months-wrapper">`;
-        
-        // loop through last 3 months
-        for (let i = 2; i >= 0; i--) {
-            const monthContext = window.moment().subtract(i, 'months');
-            const daysInMonth = monthContext.daysInMonth();
-            const offset = (monthContext.startOf('month').day() + 6) % 7;
-
-            html += `<div class="hm-month">`;
-            
-            // pad empty leading cells for calendar alignment
-            for (let j = 0; j < offset; j++) html += `<div class="hm-cell hm-hidden"></div>`;
-
-            // build day cells
-            for (let d = 1; d <= daysInMonth; d++) {
-                const dateString = monthContext.date(d).format('YYYY-MM-DD');
-                const rawValue = dataMap[dateString]?.[stat.prop];
-
-                // conditionally sanitize to preserve undefined status for missing files
-                const value: number | undefined = (rawValue !== undefined && rawValue !== null)
-                    ? this.sanitize(rawValue, stat.boundaries)
-                    : undefined;
-
-                const bgColor = this.renderCellColor(value, habitData.maxRecorded, stat.color, stat.boundaries);
-                const isToday = dateString === window.moment().format('YYYY-MM-DD');
-
-                html += `<div class="hm-cell ${isToday ? 'hm-today' : ''}" style="background-color: ${bgColor}" title="${dateString}: ${rawValue ?? 'No data'}"></div>`;
-            }
-            html += `</div>`;
-        }
-        return html + `</div>`;
-    }
-
-    // build the ui card for a specific stat
-    renderCard(stat: any, habitData: any, dataMap: any) {
-        if (!habitData) return `<div class="hm-card">No data: ${stat.prop}</div>`;
-
-        // determine success state for ui borders
-        const isPositive = stat.streakType === "positive";
-        const isSuccessToday = isPositive ? habitData.currentToday > 0 : habitData.currentToday === 0;
-        const cardClass = `hm-card ${(isPositive && isSuccessToday) ? 'hm-card-done' : ''} ${habitData.isNewPR ? 'hm-pr-enchanted' : ''}`;
-
-        // build rpg elements for habits
-        let progressHtml = "";
-        if (stat.type === "habit") {
-            const m = habitData.mastery;
-            const r = habitData.rank;
-
-            const masteryTooltip = `Level ${m.level}\nLifetime XP: ${m.totalXp}\nProgress: ${m.currentXp} / ${m.requiredXp} XP`;
-            const rankTooltip = r ? `${r.name} Rank\n${r.progress}% toward ${r.nextRank}` : "";
-
-            progressHtml = `
-                <div class="mastery-container" title="${masteryTooltip}">
-                    <div class="mastery-badge">Lvl ${m.level}</div>
-                    <div class="rank-progress-outer">
-                        <div class="rank-progress-inner" style="width: ${m.progress}%"></div>
-                    </div>
-                </div>
-                ${r ? `
-                <div class="rank-container" title="${rankTooltip}">
-                    <div class="rank-badge ${r.cssClass}">${r.name}</div>
-                </div>` : ''}
-            `;
-        }
-
-        // determine trend colors and icons
-        const goal = stat.goal || "up";
-        const trendIsGood = goal === "up" ? habitData.trend > 0 : habitData.trend < 0;
-
-        const streakTooltip = `All-time best: ${habitData.bestStreak}`;
-        const streakIcon = habitData.atRisk ? "⚠️" : (habitData.isNewPR ? "🌟" : "🔥");
-        const streakHtml = habitData.streak > 0
-            ? ` | <span class="${habitData.atRisk ? 'streak-warning' : 'streak-active'}" title="${streakTooltip}">${streakIcon} ${habitData.streak}</span>`
-            : "";
-
-        // build final footer tooltip strings
-        const statsTooltip = `Current: ${this.formatValue(stat, habitData.avg90)}\nPrevious: ${this.formatValue(stat, habitData.prevAvg90)}\nLifetime: ${this.formatValue(stat, habitData.lifetimeAvg)}\nConsistency: ${habitData.logs90}/90 days`;
-        const freqSuffix = stat.dataType === "rating" ? "" : ` / ${stat.freq}`;
-
-        return `
-    <div class="${cardClass}">
-        ${progressHtml}
-        <h3><span class="hm-title-text">${stat.title}</span></h3>
-        ${this.renderHeatmap(stat, habitData, dataMap)}
-        <div class="hm-footer">
-            <span title="${statsTooltip}" class="hm-stat-details">
-                ${this.formatValue(stat, habitData.avg90)}${freqSuffix} | 
-                <span class="${habitData.trend !== 0 ? (trendIsGood ? 'trend-good' : 'trend-bad') : ''}">
-                    ${habitData.trend > 0 ? "+" : ""}${habitData.trend.toFixed(0)}%
-                </span>
-            </span>
-            ${streakHtml}
-        </div>
-    </div>`;
-
-    }
-
-    // main entry point: assemble the full dashboard ui
-    renderDashboard(store: any, stats: any[], dataMap: any): string {
-        const { global: glob, habits } = store;
-        const html: string[] =[];
-        
-        // build daily quest progress bar
-        const questPerc = glob.quest.total > 0 ? (glob.quest.completed / glob.quest.total) * 100 : 0;
-        html.push(`<div class="quest-container"><div class="quest-label"><span>🎯 DAILY QUEST</span><span>${glob.quest.completed}/${glob.quest.total}</span></div><div class="quest-bar-outer"><div class="quest-bar-inner" style="width:${questPerc}%"></div></div></div>`);
-        
-        // build global xp and level bar
-        const todayXpPerc = (glob.todayXp / glob.levelData.requiredXp) * 100;
-        html.push(`<div class="global-xp-wrapper ${glob.isPerfectDay ? 'perfect-day-glow' : ''}"><div class="global-xp-label"><span>🌍 ${glob.title}</span><span>Lvl ${glob.levelData.level}</span></div><div class="xp-bar-outer" style="height:12px"><div class="xp-bar-inner" style="width:${glob.levelData.progress}%; background:var(--text-accent)"></div><div class="xp-bar-inner today-highlight" style="width:${todayXpPerc}%"></div></div><div class="xp-label" style="margin-top:5px;font-size:0.8em;opacity:0.8"><span>${glob.levelData.currentXp}/${glob.levelData.requiredXp} XP</span> ${glob.todayXp > 0 ? `<span style="color:var(--text-accent)">+${Math.floor(glob.todayXp)}</span>` : ''}</div></div>`);
-        
-        // render stat cards
-        html.push(`<div class="dashboard-wrapper" style="margin-top:20px;">`);
-        stats.forEach((stat: any) => html.push(this.renderCard(stat, habits[stat.prop], dataMap)));
-        html.push(`</div>`);
-        
-        return html.join("");
+    /*
+    *  safely parse data, apply default and enforce boundaries
+    *  ensure data is valid number before reaching logic engine
+    */
+    private sanitize(value: any, boundaries: Boundaries): number {
+        const numericValue = Number(value);
+        return (isNaN(numericValue) || value === undefined || value === null)
+            ? boundaries.default
+            : Math.min(Math.max(numericValue, boundaries.min), boundaries.max);
     }
 }

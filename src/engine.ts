@@ -1,5 +1,3 @@
-import { moment } from "obsidian";
-
 export interface XpConfig {
     type: "multiplier" | "threshold" | "none" | "linear";
     mul?: number;
@@ -195,20 +193,29 @@ export class HabitEngine {
     }
 
     // handle streak increments, cheat days, and resets
-    private updateStreak(habit: HabitData, isSuccess: boolean, isToday: boolean) {
+    private updateStreak(habit: HabitData, isSuccess: boolean, isToday: boolean, streakType: StreakType) {
         if (isSuccess) {
             habit.daysSinceMiss++;
             habit.streak++;
-            if (habit.daysSinceMiss >= 4) habit.cheatDays = 1;
+            // only positive habits get "cheat day" grace periods (e.g. gym)
+            if (streakType === "positive" && habit.daysSinceMiss >= 4) {
+                habit.cheatDays = 1;
+            }
             if (habit.streak > habit.bestStreak) habit.bestStreak = habit.streak;
-        } else if (!isToday) {
-            // consume cheat day or reset streak
-            if (habit.streak > 0 && habit.cheatDays > 0) {
-                habit.cheatDays = 0;
-                habit.daysSinceMiss = 0;
-            } else {
-                habit.streak = 0;
-                habit.daysSinceMiss = 0;
+        } else {
+            // reset logic
+            const shouldResetImmediately = (streakType === "negative" || !isToday);
+
+            if (shouldResetImmediately) {
+                // negative streaks break immediately. positive streaks break if not today.
+                if (streakType === "positive" && habit.cheatDays > 0) {
+                    habit.cheatDays = 0;
+                    habit.daysSinceMiss = 0;
+                } else {
+                    habit.streak = 0;
+                    habit.daysSinceMiss = 0;
+                    habit.cheatDays = 0;
+                }
             }
         }
     }
@@ -273,7 +280,7 @@ export class HabitEngine {
                 // process streak conditions
                 if (stat.streakType !== "none") {
                     const isSuccess = this.isSuccess(value, stat.streakType);
-                    this.updateStreak(habit, isSuccess, isToday);
+                    this.updateStreak(habit, isSuccess, isToday, stat.streakType);
                 }
             });
         });
@@ -341,6 +348,7 @@ export class HabitEngine {
 
         // set ui state flags
         const successToday = this.isSuccess(habit.currentToday, stat.streakType);
+        // atRisk only shows for positive habits that haven't been done yet today if the streak would end otherwise
         habit.atRisk = (stat.streakType === "positive" && !successToday && habit.streak > 0 && habit.cheatDays === 0);
         habit.isNewPR = (stat.streakType !== "none" && habit.streak > 1 && habit.streak >= habit.bestStreak);
     }
