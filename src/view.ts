@@ -205,7 +205,7 @@ export class DashboardView {
         const goal = stat.goal || "up";
         const trendIsGood = goal === "up" ? habit.trend > 0 : habit.trend < 0;
         const trendClass = habit.trend !== 0 ? (trendIsGood ? 'trend-good' : 'trend-bad') : '';
-        const freqSuffix = stat.dataType === "rating" ? "" : ` / ${stat.freq}`;
+        const freqSuffix = (stat.dataType === "rating" || stat.dataType === "boolean") ? "" : ` / ${stat.freq}`;
 
         const statsTooltip = `
             Current: ${this.formatValue(stat, habit.avg90)}
@@ -284,6 +284,10 @@ export class DashboardView {
         if (stat.dataType === "rating") {
             const adjustedValue = val - stat.boundaries.default;
             return `${adjustedValue >= 0 ? "+" : ""}${adjustedValue.toFixed(1)}`;
+        }
+
+        if (stat.dataType === "boolean") {
+            return `${(val * 100).toFixed(0)}%`;
         }
 
         const multiplier = stat.freq === "week" ? val * 7 : val;
