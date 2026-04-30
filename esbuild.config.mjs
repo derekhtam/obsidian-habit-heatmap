@@ -1,6 +1,16 @@
 import esbuild from "esbuild";
 import process from "process";
 import { builtinModules } from 'node:module';
+import { copyFileSync, readFileSync } from 'node:fs';
+
+try {
+	for (const line of readFileSync('.env', 'utf8').split('\n')) {
+		const m = line.match(/^(\w+)="?(.+?)"?\s*$/);
+		if (m && !process.env[m[1]]) process.env[m[1]] = m[2];
+	}
+} catch {}
+
+const vaultPluginDir = process.env.OBSIDIAN_VAULT_PLUGIN_DIR;
 
 const banner =
 `/*
@@ -39,6 +49,16 @@ const context = await esbuild.context({
 	treeShaking: true,
 	outfile: "main.js",
 	minify: prod,
+	plugins: vaultPluginDir ? [{
+		name: 'copy-to-vault',
+		setup(build) {
+			build.onEnd(() => {
+				for (const f of ['main.js', 'manifest.json', 'styles.css']) {
+					try { copyFileSync(f, `${vaultPluginDir}/${f}`); } catch {}
+				}
+			});
+		},
+	}] : [],
 });
 
 if (prod) {
