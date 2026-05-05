@@ -279,6 +279,8 @@ export class HabitEngine {
         const sortedDates = Object.keys(dataMap).sort();
 
         // chronologically process all historical data
+        const questStats = this.stats.filter(s => s.type === "habit");
+
         sortedDates.forEach(dateString => {
             const pageData = dataMap[dateString];
             const isToday = dateString === todayStr;
@@ -316,6 +318,21 @@ export class HabitEngine {
                     this.updateStreak(habit, isSuccess, isToday, stat.streakType);
                 }
             });
+
+            // award perfect day bonus for every day where all habits succeeded
+            if (questStats.length > 0) {
+                const allCompleted = questStats.every(s => {
+                    const value = this.sanitizeValue(pageData[s.prop], s.boundaries);
+                    return this.isSuccess(value, s.streakType);
+                });
+                if (allCompleted) {
+                    store.global.xp += 100;
+                    if (isToday) {
+                        store.global.isPerfectDay = true;
+                        store.global.todayXp += 100;
+                    }
+                }
+            }
         });
 
         // resolve rolling averages and final ui flags
@@ -404,16 +421,8 @@ export class HabitEngine {
         store.global.quest.total = questStats.length;
         store.global.quest.completed = questStats.filter(s => {
             const habit = store.habits[s.prop];
-            // verify habit exists before checking success
             return habit ? this.isSuccess(habit.currentToday, s.streakType) : false;
         }).length;
-
-        // resolve perfect day global xp bonus
-        if (store.global.quest.total > 0 && store.global.quest.completed === store.global.quest.total) {
-            store.global.isPerfectDay = true;
-            store.global.xp += 100;
-            store.global.todayXp += 100;
-        }
 
         store.global.levelData = HabitEngine.getLevelData(store.global.xp, this.settings.globalFactor);
         store.global.title = HabitEngine.getGlobalTitle(store.global.levelData.level);
